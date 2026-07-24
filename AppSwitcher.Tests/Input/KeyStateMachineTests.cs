@@ -228,12 +228,120 @@ public class KeyStateMachineTests
         _sut.IsModifierHeld.Should().BeFalse();
     }
 
+    [Theory]
+    [InlineData(Key.LeftCtrl)]
+    [InlineData(Key.RightCtrl)]
+    [InlineData(Key.LeftAlt)]
+    [InlineData(Key.RightAlt)]
+    [InlineData(Key.LeftShift)]
+    [InlineData(Key.Capital)]
+    public void ProcessKeyDown_ReturnsUnrelatedKeyReset_WhenUnrelatedKeyPressedWhileNonWinModifierHeld(Key modifier)
+    {
+        _sut.Configure(modifier);
+        _sut.ProcessKeyDown(modifier);
+
+        var result = _sut.ProcessKeyDown(Key.F5);
+
+        result.Should().BeOfType<UnrelatedKeyReset>();
+        _sut.IsModifierHeld.Should().BeFalse();
+    }
+
     [Fact]
     public void ProcessKeyDown_ReturnsNoOp_ForUnrelatedKeyWhenModifierNotHeld()
     {
         var result = _sut.ProcessKeyDown(Key.F5);
 
         result.Should().BeOfType<NoOp>();
+    }
+
+    // ── Win chord passthrough ─────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData(Key.LWin)]
+    [InlineData(Key.RWin)]
+    public void ProcessKeyDown_ReturnsPassthroughKeyPressed_WhenUnrelatedKeyWhileWinHeld(Key winKey)
+    {
+        _sut.Configure(winKey);
+        _sut.ProcessKeyDown(winKey);
+
+        var result = _sut.ProcessKeyDown(Key.F5);
+
+        result.Should().BeOfType<PassthroughKeyPressed>()
+            .Which.Key.Should().Be(Key.F5);
+        _sut.IsModifierHeld.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ProcessKeyDown_KeepsModifierHeld_AfterWinPassthroughKey()
+    {
+        _sut.Configure(Key.LWin);
+        _sut.ProcessKeyDown(Key.LWin);
+        _sut.ProcessKeyDown(Key.Tab);
+
+        _sut.IsModifierHeld.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ProcessKeyUp_ReturnsModifierReleasedAfterAction_AfterWinPassthroughKey()
+    {
+        _sut.Configure(Key.LWin);
+        _sut.ProcessKeyDown(Key.LWin);
+        _sut.ProcessKeyDown(Key.Tab);
+
+        var result = _sut.ProcessKeyUp(Key.LWin);
+
+        result.Should().BeOfType<ModifierReleasedAfterAction>();
+        _sut.IsModifierHeld.Should().BeFalse();
+    }
+
+    [Fact]
+    public void FullSequence_WinMultiArrow_StaysInActionState()
+    {
+        _sut.Configure(Key.LWin);
+
+        _sut.ProcessKeyDown(Key.LWin).Should().BeOfType<ModifierPressed>();
+        _sut.ProcessKeyDown(Key.Left).Should().BeOfType<PassthroughKeyPressed>();
+        _sut.IsModifierHeld.Should().BeTrue();
+        _sut.ProcessKeyDown(Key.Left).Should().BeOfType<PassthroughKeyPressed>();
+        _sut.IsModifierHeld.Should().BeTrue();
+        _sut.ProcessKeyUp(Key.LWin).Should().BeOfType<ModifierReleasedAfterAction>();
+        _sut.IsModifierHeld.Should().BeFalse();
+    }
+
+    [Fact]
+    public void ProcessKeyDown_ReturnsLetterKeyPressed_WhenLetterWhileLWinHeld()
+    {
+        _sut.Configure(Key.LWin);
+        _sut.ProcessKeyDown(Key.LWin);
+
+        var result = _sut.ProcessKeyDown(Key.X);
+
+        result.Should().BeOfType<LetterKeyPressed>()
+            .Which.Key.Should().Be(Key.X);
+        _sut.IsModifierHeld.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ProcessKeyDown_ReturnsDigitKeyPressed_WhenDigitWhileLWinHeld()
+    {
+        _sut.Configure(Key.LWin);
+        _sut.ProcessKeyDown(Key.LWin);
+
+        var result = _sut.ProcessKeyDown(Key.D1);
+
+        result.Should().BeOfType<DigitKeyPressed>()
+            .Which.Key.Should().Be(Key.D1);
+        _sut.IsModifierHeld.Should().BeTrue();
+    }
+
+    [Fact]
+    public void FullSequence_LWinPressRelease_ProducesCleanRelease()
+    {
+        _sut.Configure(Key.LWin);
+
+        _sut.ProcessKeyDown(Key.LWin).Should().BeOfType<ModifierPressed>();
+        _sut.ProcessKeyUp(Key.LWin).Should().BeOfType<ModifierReleasedClean>();
+        _sut.IsModifierHeld.Should().BeFalse();
     }
 
     // ── Reset ───────────────────────────────────────────────────────────────

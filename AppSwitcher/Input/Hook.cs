@@ -32,6 +32,7 @@ internal class Hook(
     private readonly HashSet<Key> _suppressedLetterKeys = [];
     private readonly HashSet<Key> _suppressedDigitKeys = [];
     private long? _previousLetterUpTick;
+    private bool _winChordPassthroughActive;
 
     // there are apps which run un-elevated will still steal key events
     private readonly FrozenSet<string> _processesStealingKeyEvents = new[]
@@ -125,6 +126,10 @@ internal class Hook(
                 // this handles Right Alt when switch is triggered by Enter
                 statsService.Enqueue(new AltTabEvent(altTab.NavCount));
                 break;
+            case KeyTransition.PassthroughKeyPressed { Key: var passthroughKey }:
+                logger.LogDebug("Passthrough key {Key} while Win held - arming chord passthrough", passthroughKey);
+                EnsureWinChordPassthrough();
+                break;
             case KeyTransition.UnrelatedKeyReset:
                 logger.LogDebug("Unrelated key {Key} pressed while modifier down - resetting state", e.InputEvent.Key);
                 ResetModifierState();
@@ -188,6 +193,7 @@ internal class Hook(
                 {
                     SuppressModifier(e);
                 }
+                ReleaseWinChordPassthroughIfNeeded();
                 FinishPeek();
                 break;
 
@@ -274,6 +280,11 @@ internal class Hook(
                 }
             }
         }
+        else
+        {
+            // Unbound letter while modifier held: for Win, re-introduce modifier to OS.
+            EnsureWinChordPassthrough();
+        }
     }
 
     private void MonitorPotentialElevation(AppSwitchResult result)
@@ -321,6 +332,11 @@ internal class Hook(
             logger.LogDebug("{Modifier} + {Digit} detected, switched to window #{Number}", _config.Modifier, digit, index + 1);
             RefreshOrHideOverlay();
         }
+        else
+        {
+            // No window at this index: for Win, re-introduce modifier so Win+N reaches the OS.
+            EnsureWinChordPassthrough();
+        }
     }
 
     private void FinishPeek()
@@ -362,8 +378,49 @@ internal class Hook(
     // Inverse of AppOverlayService.IndexToKey: D1→0, D2→1, …, D9→8, D0→9
     private static int DigitKeyToIndex(Key key) => key == Key.D0 ? 9 : key - Key.D1;
 
+    private void EnsureWinChordPassthrough()
+    {
+        if (_winChordPassthroughActive)
+        {
+            return;
+        }
+
+        ArgumentNullException.ThrowIfNull(_config);
+        if (_config.Modifier is not (Key.LWin or Key.RWin))
+        {
+            return;
+        }
+
+        var ok = KeyboardInput.SendSyntheticKeyDown(_config.Modifier);
+        logger.LogDebug("Armed Win chord passthrough for {Key}, success: {Ok}", _config.Modifier, ok);
+        if (!ok)
+        {
+            return;
+        }
+
+        _winChordPassthroughActive = true;
+        overlayShowTimer.Cancel();
+        overlayService.Hide();
+    }
+
+    private void ReleaseWinChordPassthroughIfNeeded()
+    {
+        if (!_winChordPassthroughActive)
+        {
+            return;
+        }
+
+        ArgumentNullException.ThrowIfNull(_config);
+        var ok = KeyboardInput.SendSyntheticKeyUp(_config.Modifier);
+        logger.LogDebug("Released Win chord passthrough for {Key}, success: {Ok}", _config.Modifier, ok);
+        _winChordPassthroughActive = false;
+    }
+
     private void ResetModifierState()
     {
+        // Release synthetic Win first so forced idle (config reload, elevated app, …)
+        // never leaves the OS thinking Win is still held.
+        ReleaseWinChordPassthroughIfNeeded();
         _stateMachine.Reset();
         _suppressedLetterKeys.Clear();
         _suppressedDigitKeys.Clear();

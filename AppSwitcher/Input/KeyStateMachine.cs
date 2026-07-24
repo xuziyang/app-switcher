@@ -22,6 +22,8 @@ internal sealed class KeyStateMachine
     private State _state = State.Idle;
     private Key _configuredModifier;
 
+    private bool IsWinModifier => _configuredModifier is Key.LWin or Key.RWin;
+
     // Alt+Tab tracking (independent of the configured modifier)
     private bool _altHeld;        // LeftAlt or RightAlt is currently down
     private bool _altTabActive;   // Tab was pressed → switcher overlay is open
@@ -70,6 +72,14 @@ internal sealed class KeyStateMachine
         {
             _state = State.ModifierHeldWithActionKey;
             return new KeyTransition.DigitKeyPressed(key);
+        }
+
+        // Win chords (Win+Tab, Win+Arrow, …) need the modifier to stay held across
+        // multiple non letter/digit keys. Other modifiers still reset.
+        if (IsWinModifier)
+        {
+            _state = State.ModifierHeldWithActionKey;
+            return new KeyTransition.PassthroughKeyPressed(key);
         }
 
         _state = State.Idle;
@@ -194,8 +204,18 @@ internal abstract record KeyTransition
     /// <summary>A digit key was pressed while the modifier is held.</summary>
     public sealed record DigitKeyPressed(Key Key) : KeyTransition;
 
-    /// <summary>An unrelated key was pressed while the modifier was held; state has been reset to Idle.</summary>
+    /// <summary>
+    /// An unrelated key was pressed while a non-Win modifier was held; state has been reset to Idle.
+    /// Win modifiers emit <see cref="PassthroughKeyPressed"/> instead so multi-key chords stay held.
+    /// </summary>
     public sealed record UnrelatedKeyReset : KeyTransition;
+
+    /// <summary>
+    /// Non letter/digit key while Win modifier is held. State moves to ModifierHeldWithActionKey
+    /// so release is <see cref="ModifierReleasedAfterAction"/>. Hook should arm Win-chord passthrough
+    /// and not suppress the key.
+    /// </summary>
+    public sealed record PassthroughKeyPressed(Key Key) : KeyTransition;
 
     /// <summary>Left/Right Alt released (or Enter in RightAlt sticky mode) after ≥1 Tab press. <see cref="NavCount"/> is total navigation keypresses (Tab + arrow keys).</summary>
     public sealed record AltTabSwitched(int NavCount) : KeyTransition;

@@ -121,6 +121,7 @@ Available commands:
 
 - Configured modifier down/up events are suppressed to avoid side effects in foreground apps.
 - Pressing modifier alone (without letter key) still works as usual. For example, `Apps` alone can still open context menu.
+- When the modifier is Left/Right Win, unmatched chords are passed through to Windows (`Win+X`, `Win+R`, `Win+Tab`, `Win+Arrow`, …). Bound `Win+letter` hotkeys still switch apps and are not passed through.
 - If you assign common shortcuts (for example `Ctrl+V`) as AppSwitcher hotkeys, those combinations will be intercepted system-wide and will not reach the foreground app.
 - Complex shortcuts may conflict. Example: if `Ctrl` is your configured modifier, an app shortcut like `Ctrl+Shift+T` may fail because `Ctrl` is suppressed before the full combo reaches the app.
 - Elevated windows limitation (UIPI): when an administrator app is focused, AppSwitcher hotkeys will not be intercepted unless AppSwitcher is also run as Administrator.
