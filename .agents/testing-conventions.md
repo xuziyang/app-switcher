@@ -3,9 +3,30 @@
 ## Project & Framework
 
 - Test project: `AppSwitcher.Tests`
-- Framework: **xUnit 2.x**
+- Framework: **xUnit v3** (`xunit.v3` package, v3.x)
 - Assertions: **AwesomeAssertions** (`result.Should()...`)
 - Logger stub: `NullLogger<T>.Instance` from `Microsoft.Extensions.Logging.Abstractions`
+
+## Global Fixture
+
+`GlobalFixture.cs` (root of `AppSwitcher.Tests`) runs once per test session to configure LiteDB's global mapper — required for any test that exercises LiteDB:
+
+```csharp
+[assembly: AssemblyFixture(typeof(GlobalFixture))]
+
+public class GlobalFixture
+{
+    public GlobalFixture()
+    {
+        BsonMapper.Global.EnumAsInteger = true;
+        BsonMapper.Global.RegisterType<DateOnly>(
+            serialize: d => d.ToString("yyyy-MM-dd"),
+            deserialize: v => DateOnly.Parse(v.AsString));
+    }
+}
+```
+
+Do **not** repeat this setup inside individual test classes — `GlobalFixture` already handles it.
 
 ## File & Namespace Layout
 
@@ -15,7 +36,7 @@ Test files mirror the source directory structure exactly:
 |--------|------|
 | `Configuration/Foo.cs` | `AppSwitcher.Tests/Configuration/FooTests.cs` |
 | `Configuration/Storage/Bar.cs` | `AppSwitcher.Tests/Configuration/Storage/BarTests.cs` |
-| `Utils/Baz.cs` | `AppSwitcher.Tests/Utils/BazTests.cs` |
+| `Stats/Baz.cs` | `AppSwitcher.Tests/Stats/BazTests.cs` |
 | `UI/ViewModels/Qux.cs` | `AppSwitcher.Tests/UI/ViewModels/QuxTests.cs` |
 
 Namespace follows the folder: `namespace AppSwitcher.Tests.Configuration;`, `namespace AppSwitcher.Tests.Utils;`, etc.
