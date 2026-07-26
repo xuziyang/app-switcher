@@ -31,6 +31,7 @@ internal class Hook(
     private AppConfig? _config;
     private readonly HashSet<Key> _suppressedLetterKeys = [];
     private readonly HashSet<Key> _suppressedDigitKeys = [];
+    private readonly HashSet<Key> _passthroughLetterKeys = [];
     private long? _previousLetterUpTick;
 
     // there are apps which run un-elevated will still steal key events
@@ -136,6 +137,7 @@ internal class Hook(
     {
         var letterWasSuppressed = _suppressedLetterKeys.Remove(e.InputEvent.Key);
         var digitWasSuppressed = _suppressedDigitKeys.Remove(e.InputEvent.Key);
+        var letterWasPassthrough = _passthroughLetterKeys.Remove(e.InputEvent.Key);
 
         if (letterWasSuppressed || digitWasSuppressed)
         {
@@ -146,6 +148,16 @@ internal class Hook(
                 _previousLetterUpTick = Stopwatch.GetTimestamp();
             }
             FinishPeek();
+            return;
+        }
+
+        if (letterWasPassthrough)
+        {
+            e.SuppressKeyPress = true;
+            var result = KeyboardInput.SendSyntheticCombination(_config!.Modifier, e.InputEvent.Key);
+            logger.LogDebug(
+                "No binding for {Modifier}+{Key} - sent synthetic combination, success: {Result}",
+                _config.Modifier, e.InputEvent.Key, result);
             return;
         }
 
@@ -274,6 +286,15 @@ internal class Hook(
                 }
             }
         }
+        else if (_stateMachine.ConfiguredModifierHasSideEffect)
+        {
+            // Modifier+letter is not bound to any app: suppress the bare letter (which Windows would see
+            // without the modifier) and schedule a synthetic modifier+letter replay on key-up so Windows
+            // receives the correct combination and can act on it (e.g. Win+D → show desktop).
+            e.SuppressKeyPress = true;
+            _passthroughLetterKeys.Add(letter);
+            logger.LogDebug("No binding for {Modifier}+{Letter} - deferring synthetic passthrough to key-up", _config.Modifier, letter);
+        }
     }
 
     private void MonitorPotentialElevation(AppSwitchResult result)
@@ -367,6 +388,7 @@ internal class Hook(
         _stateMachine.Reset();
         _suppressedLetterKeys.Clear();
         _suppressedDigitKeys.Clear();
+        _passthroughLetterKeys.Clear();
         _previousLetterUpTick = null;
         peeker.Cancel();
         overlayShowTimer.Cancel();

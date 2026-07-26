@@ -30,6 +30,8 @@ internal sealed class KeyStateMachine
 
     public bool IsModifierHeld => _state != State.Idle;
 
+    public bool ConfiguredModifierHasSideEffect => ModifierKeysWithSideEffects.Contains(_configuredModifier);
+
     public long ModifierPressedAtTick { get; private set; }
 
     public KeyTransition ProcessKeyDown(Key key)

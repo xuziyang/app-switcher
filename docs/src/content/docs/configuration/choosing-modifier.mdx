@@ -19,6 +19,11 @@ Without blocking, a hotkey like `Apps+B` would switch to your browser *and* trig
 the modifier's side effect at the same time. AppSwitcher prevents this automatically
 for all modifiers that have known side effects.
 
+When you press a modifier+letter combination that **is not assigned** to any app,
+AppSwitcher replays the full combination to Windows so the original shortcut still
+fires. For example, if `Win+F` is bound to your browser but `Win+D` is not,
+pressing `Win+D` will still show the desktop.
+
 <Aside type="note">
   Blocking only affects the **configured** modifier key itself — it does not interfere with any
   other use of that key outside of AppSwitcher hotkey combinations.
@@ -49,7 +54,7 @@ as an AppSwitcher modifier will conflict with everyday actions.
 | -------- | ------------- | ----- |
 | **Ctrl** | `Ctrl+C`, `Ctrl+V`, `Ctrl+Z`, `Ctrl+S` and most app shortcuts | Extremely disruptive — avoid as a sole modifier |
 | **Shift** | Ability to type uppercase letters with that specific Shift key | The opposite Shift key still works, but muscle memory will break |
-| **Left Alt** | `Alt+F4`, `Alt+Tab`, and app menu navigation | Loses many system shortcuts on top of the side effect above |
+| **Left Alt** | `Alt+F4`, `Alt+Tab`, and app menu navigation | Unassigned combinations (e.g. `Alt+F4`) are passed through to Windows; only the combinations you assign to apps are intercepted |
 | **Right Alt** | `AltGr` combinations (accented characters, symbols on non-US keyboards) | Especially problematic for non-English keyboard layouts. See note below. |
 
 <Aside type="caution">
@@ -94,9 +99,14 @@ This is a bit unconventional and may cause some muscle memory issues, but it can
 
 ### Win key ⚠️ Usable with care
 
-The `Win` key works well as a modifier but many combinations are already claimed by
-Windows itself (`Win+D`, `Win+E`, `Win+L`, etc.). You can assign some of these combinations if you don't mind losing the original Windows shortcut, but it's generally best to choose combos that aren't already taken by the OS.
-Also some of them (`Win+L`) are impossible to override because they are handled at a lower level by Windows.
+The `Win` key works well as a modifier. Many combinations are already claimed by
+Windows itself (`Win+D`, `Win+E`, `Win+L`, etc.), but you only lose the ones you
+actively assign to an app. Any combination you leave unassigned continues to work
+as a normal Windows shortcut — for example, if only `Win+F` is bound to your browser,
+`Win+D` still shows the desktop.
+
+Some shortcuts (`Win+L`) are handled at a lower level by Windows and cannot be
+overridden by AppSwitcher regardless of assignment.
 Pressing `Win` alone will still open the Start menu, but will be blocked when held down with another key for a hotkey.
 
 ## Summary
@@ -107,7 +117,7 @@ Pressing `Win` alone will still open the Start menu, but will be blocked when he
 | **Apps** | ✅ Yes | Excellent if your keyboard has it |
 | **Right Ctrl** | ✅ Yes | Solid fallback; won't break `Left Ctrl` shortcuts |
 | **Right Shift** | ✅ Yes | Works well if you only use the other `Shift` key for uppercase letters |
-| **Win** | ⚠️ Mostly | Avoid combos already claimed by Windows |
+| **Win** | ⚠️ Mostly | Unassigned combos pass through; only assigned ones are intercepted. Avoid `Win+L` |
 | **Right Alt** | ⚠️ Mostly | Can be problematic on non-US layouts |
 | **Left Alt** | ⚠️ Risky | Side effects suppressed, but many shortcut conflicts |
 | **Left Ctrl** | ❌ Avoid | Loses clipboard and most app shortcuts |

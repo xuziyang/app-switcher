@@ -1,5 +1,8 @@
 # Change Log
 
+## [1.10.3] - 2026-07-27
+- Pass through unbound modifier+key combinations to Windows instead of suppressing them (e.g. `Win+D` shows the desktop when not assigned to any app)
+
 ## [1.10.2] - 2026-05-11
 - Fix scrollbar overlapping controls in Settings window General page
 - Fix bug when stats were not reset on each new day when app is not restarted

@@ -573,4 +573,25 @@ public class KeyStateMachineTests
 
         result.Should().Be(new AltTabSwitched(2));
     }
+
+    // ── ConfiguredModifierHasSideEffect ─────────────────────────────────────
+
+    [Theory]
+    [MemberData(nameof(ModifiersSideEffects))]
+    public void ConfiguredModifierHasSideEffect_ReflectsConfiguredModifier(Key modifierKey, bool expectedHasSideEffect)
+    {
+        _sut.Configure(modifierKey);
+
+        _sut.ConfiguredModifierHasSideEffect.Should().Be(expectedHasSideEffect);
+    }
+
+    [Fact]
+    public void ConfiguredModifierHasSideEffect_UpdatesWhenReconfigured()
+    {
+        _sut.Configure(Key.LWin);
+        _sut.ConfiguredModifierHasSideEffect.Should().BeTrue();
+
+        _sut.Configure(Key.LeftCtrl);
+        _sut.ConfiguredModifierHasSideEffect.Should().BeFalse();
+    }
 }
