@@ -30,45 +30,41 @@ internal static class ToggleWindowTargetResolver
             return null;
         }
 
-        var targetIndex = 0;
-        if (currentHandle is { } fg)
+        // Prefer focused match, else remembered, else Z-order first.
+        var targetIndex = IndexOf(matchingHandles, currentHandle);
+        if (targetIndex < 0)
         {
-            var fgIndex = IndexOf(matchingHandles, fg);
-            if (fgIndex >= 0)
-            {
-                targetIndex = fgIndex;
-            }
-            else if (rememberedHandle is { } remembered)
-            {
-                var rememberedIndex = IndexOf(matchingHandles, remembered);
-                if (rememberedIndex >= 0)
-                {
-                    targetIndex = rememberedIndex;
-                }
-            }
-        }
-        else if (rememberedHandle is { } remembered)
-        {
-            var rememberedIndex = IndexOf(matchingHandles, remembered);
-            if (rememberedIndex >= 0)
-            {
-                targetIndex = rememberedIndex;
-            }
+            targetIndex = IndexOf(matchingHandles, rememberedHandle);
         }
 
-        var target = matchingHandles[targetIndex];
-        var action = currentHandle is { } current && current == target
+        if (targetIndex < 0)
+        {
+            targetIndex = 0;
+        }
+
+        var action = currentHandle is { } current && current == matchingHandles[targetIndex]
             ? ToggleWindowAction.Hide
             : ToggleWindowAction.Activate;
 
         return new Result(targetIndex, action);
     }
 
-    private static int IndexOf(IReadOnlyList<HWND> handles, HWND handle)
+    private static int IndexOf(IReadOnlyList<HWND> handles, HWND? handle)
     {
+        if (handle is not { } h)
+        {
+            return -1;
+        }
+
+        // Prefer BCL IndexOf when the caller passed a List (common case).
+        if (handles is List<HWND> list)
+        {
+            return list.IndexOf(h);
+        }
+
         for (var i = 0; i < handles.Count; i++)
         {
-            if (handles[i] == handle)
+            if (handles[i] == h)
             {
                 return i;
             }
