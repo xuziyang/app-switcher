@@ -22,7 +22,9 @@ internal sealed class KeyStateMachine
     private State _state = State.Idle;
     private Key _configuredModifier;
 
-    private bool IsWinModifier => _configuredModifier is Key.LWin or Key.RWin;
+    // When true, unmatched non letter/digit keys stay held and emit PassthroughKeyPressed
+    // (Win chords like Win+Tab / Win+Arrow). Set from the configured modifier in Configure.
+    private bool _passthroughUnmatchedChords;
 
     // Alt+Tab tracking (independent of the configured modifier)
     private bool _altHeld;        // LeftAlt or RightAlt is currently down
@@ -74,9 +76,9 @@ internal sealed class KeyStateMachine
             return new KeyTransition.DigitKeyPressed(key);
         }
 
-        // Win chords (Win+Tab, Win+Arrow, …) need the modifier to stay held across
-        // multiple non letter/digit keys. Other modifiers still reset.
-        if (IsWinModifier)
+        // Passthrough-capable modifiers (Win) keep the hold across multi-key chords.
+        // Other modifiers still reset on unmatched keys.
+        if (_passthroughUnmatchedChords)
         {
             _state = State.ModifierHeldWithActionKey;
             return new KeyTransition.PassthroughKeyPressed(key);
@@ -163,6 +165,7 @@ internal sealed class KeyStateMachine
     public void Configure(Key newModifier)
     {
         _configuredModifier = newModifier;
+        _passthroughUnmatchedChords = newModifier.IsWin();
         Reset();
     }
 
@@ -205,14 +208,14 @@ internal abstract record KeyTransition
     public sealed record DigitKeyPressed(Key Key) : KeyTransition;
 
     /// <summary>
-    /// An unrelated key was pressed while a non-Win modifier was held; state has been reset to Idle.
-    /// Win modifiers emit <see cref="PassthroughKeyPressed"/> instead so multi-key chords stay held.
+    /// An unrelated key was pressed while a non-passthrough modifier was held; state has been reset to Idle.
+    /// Passthrough-capable modifiers emit <see cref="PassthroughKeyPressed"/> instead so multi-key chords stay held.
     /// </summary>
     public sealed record UnrelatedKeyReset : KeyTransition;
 
     /// <summary>
-    /// Non letter/digit key while Win modifier is held. State moves to ModifierHeldWithActionKey
-    /// so release is <see cref="ModifierReleasedAfterAction"/>. Hook should arm Win-chord passthrough
+    /// Non letter/digit key while a passthrough-capable modifier is held. State moves to ModifierHeldWithActionKey
+    /// so release is <see cref="ModifierReleasedAfterAction"/>. Hook should arm chord passthrough
     /// and not suppress the key.
     /// </summary>
     public sealed record PassthroughKeyPressed(Key Key) : KeyTransition;

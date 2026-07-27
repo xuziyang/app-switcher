@@ -51,6 +51,7 @@ internal static class ServicesConfiguration
         services.AddTransient<MigrationRunner>();
         services.AddImplementationsOf<IMigration>(ServiceLifetime.Transient);
         services.AddSingleton<ConfigurationManager>();
+        services.AddSingleton<ModifierIdleTimer>();
         services.AddSingleton<Hook>();
         services.AddSingleton<DynamicModeService>();
         services.AddSingleton<IAppNameResolver, AppNameResolver>();

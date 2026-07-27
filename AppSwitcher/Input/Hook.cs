@@ -22,7 +22,8 @@ internal class Hook(
     AppOverlayService overlayService,
     IProcessInspector processInspector,
     DynamicModeService dynamicModeService,
-    StatsService statsService) : IDisposable
+    StatsService statsService,
+    ModifierIdleTimer modifierIdleTimer) : IDisposable
 {
     private const int SyntheticModifierTapMaxDurationMs = 200;
 
@@ -32,7 +33,7 @@ internal class Hook(
     private readonly HashSet<Key> _suppressedLetterKeys = [];
     private readonly HashSet<Key> _suppressedDigitKeys = [];
     private long? _previousLetterUpTick;
-    private bool _winChordPassthroughActive;
+    private bool _chordPassthroughActive;
 
     // there are apps which run un-elevated will still steal key events
     private readonly FrozenSet<string> _processesStealingKeyEvents = new[]
@@ -44,6 +45,7 @@ internal class Hook(
     {
         _config = config;
         _stateMachine.Configure(config.Modifier);
+        modifierIdleTimer.Configure(onExpired: OnModifierIdleExpired);
         overlayShowTimer.Configure(onExpired: () => overlayService.Show(config.Applications, config.DynamicModeEnabled), config.OverlayShowDelayMs);
         logger.LogInformation("Starting hook");
         _hook.KeyboardPressed += Hook_KeyboardPressed;
@@ -58,6 +60,7 @@ internal class Hook(
     public void Dispose()
     {
         Stop();
+        modifierIdleTimer.Dispose();
         _hook.Dispose();
     }
 
@@ -65,6 +68,7 @@ internal class Hook(
     {
         _config = config;
         _stateMachine.Configure(config.Modifier);
+        modifierIdleTimer.Configure(onExpired: OnModifierIdleExpired);
         overlayShowTimer.Configure(onExpired: () => overlayService.Show(config.Applications, config.DynamicModeEnabled), config.OverlayShowDelayMs);
         // Reset state when configuration changes (especially if modifier key changes)
         ResetModifierState();
@@ -83,7 +87,7 @@ internal class Hook(
                 return;
             }
 
-            logger.LogDebug("{Event}, ModifierDown: {ModifierDown}", e.ToFriendlyString(), _stateMachine.IsModifierHeld);
+            logger.LogDebug("{Event}, ModifierDown: {modifierDown}", e.ToFriendlyString(), _stateMachine.IsModifierHeld);
 
             if (e.IsKeyDown())
             {
@@ -110,6 +114,10 @@ internal class Hook(
                     SuppressModifier(e);
                 }
 
+                // Key-repeat keeps the idle timer alive while the physical key is held.
+                // If key-up is lost, repeats stop and the timer expires → clear ghost state.
+                modifierIdleTimer.Restart();
+
                 if (t.IsFirstPress && _config!.OverlayEnabled)
                 {
                     overlayShowTimer.Start();
@@ -127,8 +135,10 @@ internal class Hook(
                 statsService.Enqueue(new AltTabEvent(altTab.NavCount));
                 break;
             case KeyTransition.PassthroughKeyPressed { Key: var passthroughKey }:
-                logger.LogDebug("Passthrough key {Key} while Win held - arming chord passthrough", passthroughKey);
-                EnsureWinChordPassthrough();
+                logger.LogDebug("Passthrough key {Key} while modifier held - arming chord passthrough", passthroughKey);
+                // Still holding modifier — keep idle timer armed for a later lost key-up.
+                modifierIdleTimer.Restart();
+                EnsureChordPassthrough();
                 break;
             case KeyTransition.UnrelatedKeyReset:
                 logger.LogDebug("Unrelated key {Key} pressed while modifier down - resetting state", e.InputEvent.Key);
@@ -149,6 +159,8 @@ internal class Hook(
             if (_stateMachine.IsModifierHeld)
             {
                 _previousLetterUpTick = Stopwatch.GetTimestamp();
+                // Letter released but modifier may still be held — keep the idle timer going.
+                modifierIdleTimer.Restart();
             }
             FinishPeek();
             return;
@@ -158,6 +170,7 @@ internal class Hook(
         switch (_stateMachine.ProcessKeyUp(e.InputEvent.Key))
         {
             case KeyTransition.ModifierReleasedClean t:
+                modifierIdleTimer.Cancel();
                 overlayShowTimer.Cancel();
                 overlayService.Hide();
                 _previousLetterUpTick = null;
@@ -186,6 +199,7 @@ internal class Hook(
                 break;
 
             case KeyTransition.ModifierReleasedAfterAction t:
+                modifierIdleTimer.Cancel();
                 overlayShowTimer.Cancel();
                 overlayService.Hide();
                 _previousLetterUpTick = null;
@@ -193,7 +207,7 @@ internal class Hook(
                 {
                     SuppressModifier(e);
                 }
-                ReleaseWinChordPassthroughIfNeeded();
+                ReleaseChordPassthroughIfNeeded();
                 FinishPeek();
                 break;
 
@@ -272,6 +286,8 @@ internal class Hook(
                 }
                 else
                 {
+                    // Successful action while modifier still held — extend idle window.
+                    modifierIdleTimer.Restart();
                     RefreshOrHideOverlay();
                     if (result?.WasStarted == true)
                     {
@@ -282,8 +298,10 @@ internal class Hook(
         }
         else
         {
-            // Unbound letter while modifier held: for Win, re-introduce modifier to OS.
-            EnsureWinChordPassthrough();
+            // Unbound letter while modifier held: re-introduce passthrough-capable modifiers to OS.
+            // Modifier is still held — keep idle timer armed.
+            modifierIdleTimer.Restart();
+            EnsureChordPassthrough();
         }
     }
 
@@ -330,12 +348,14 @@ internal class Hook(
             }
 
             logger.LogDebug("{Modifier} + {Digit} detected, switched to window #{Number}", _config.Modifier, digit, index + 1);
+            modifierIdleTimer.Restart();
             RefreshOrHideOverlay();
         }
         else
         {
-            // No window at this index: for Win, re-introduce modifier so Win+N reaches the OS.
-            EnsureWinChordPassthrough();
+            // No window at this index: re-introduce passthrough-capable modifiers so Win+N reaches the OS.
+            modifierIdleTimer.Restart();
+            EnsureChordPassthrough();
         }
     }
 
@@ -378,49 +398,52 @@ internal class Hook(
     // Inverse of AppOverlayService.IndexToKey: D1→0, D2→1, …, D9→8, D0→9
     private static int DigitKeyToIndex(Key key) => key == Key.D0 ? 9 : key - Key.D1;
 
-    private void EnsureWinChordPassthrough()
+    private void EnsureChordPassthrough()
     {
-        if (_winChordPassthroughActive)
+        if (_chordPassthroughActive)
         {
             return;
         }
 
         ArgumentNullException.ThrowIfNull(_config);
-        if (_config.Modifier is not (Key.LWin or Key.RWin))
+        // Only passthrough-capable modifiers (currently Win) were suppressed from the OS
+        // and need a synthetic re-inject so unmatched chords reach the shell.
+        if (!_config.Modifier.IsWin())
         {
             return;
         }
 
         var ok = KeyboardInput.SendSyntheticKeyDown(_config.Modifier);
-        logger.LogDebug("Armed Win chord passthrough for {Key}, success: {Ok}", _config.Modifier, ok);
+        logger.LogDebug("Armed chord passthrough for {Key}, success: {Ok}", _config.Modifier, ok);
         if (!ok)
         {
             return;
         }
 
-        _winChordPassthroughActive = true;
+        _chordPassthroughActive = true;
         overlayShowTimer.Cancel();
         overlayService.Hide();
     }
 
-    private void ReleaseWinChordPassthroughIfNeeded()
+    private void ReleaseChordPassthroughIfNeeded()
     {
-        if (!_winChordPassthroughActive)
+        if (!_chordPassthroughActive)
         {
             return;
         }
 
         ArgumentNullException.ThrowIfNull(_config);
         var ok = KeyboardInput.SendSyntheticKeyUp(_config.Modifier);
-        logger.LogDebug("Released Win chord passthrough for {Key}, success: {Ok}", _config.Modifier, ok);
-        _winChordPassthroughActive = false;
+        logger.LogDebug("Released chord passthrough for {Key}, success: {Ok}", _config.Modifier, ok);
+        _chordPassthroughActive = false;
     }
 
     private void ResetModifierState()
     {
-        // Release synthetic Win first so forced idle (config reload, elevated app, …)
-        // never leaves the OS thinking Win is still held.
-        ReleaseWinChordPassthroughIfNeeded();
+        // Release synthetic modifier first so forced idle (config reload, elevated app, …)
+        // never leaves the OS thinking the key is still held.
+        modifierIdleTimer.Cancel();
+        ReleaseChordPassthroughIfNeeded();
         _stateMachine.Reset();
         _suppressedLetterKeys.Clear();
         _suppressedDigitKeys.Clear();
@@ -428,5 +451,31 @@ internal class Hook(
         peeker.Cancel();
         overlayShowTimer.Cancel();
         overlayService.Hide();
+    }
+
+    /// <summary>
+    /// Idle-timer callback (thread-pool). Marshal to the UI thread before touching hook state.
+    /// </summary>
+    private void OnModifierIdleExpired()
+    {
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher is null || dispatcher.CheckAccess())
+        {
+            ClearStuckModifierFromIdleTimer();
+            return;
+        }
+
+        dispatcher.Invoke(ClearStuckModifierFromIdleTimer);
+    }
+
+    private void ClearStuckModifierFromIdleTimer()
+    {
+        if (!_stateMachine.IsModifierHeld)
+        {
+            return;
+        }
+
+        logger.LogDebug("Clearing stuck modifier state after idle timeout");
+        ResetModifierState();
     }
 }
