@@ -32,6 +32,7 @@ internal sealed record AppSwitchResult(
 internal class Switcher(ILogger<Switcher> logger, IWindowEnumerator windowEnumerator, ConfigurationManager configurationManager)
 {
     private readonly List<HWND> _nextWindows = [];
+    private readonly Dictionary<string, HWND> _lastToggleWindows = new(StringComparer.OrdinalIgnoreCase);
 
     public AppSwitchResult? Execute(IReadOnlyList<ApplicationConfiguration> appGroup)
     {
@@ -90,8 +91,7 @@ internal class Switcher(ILogger<Switcher> logger, IWindowEnumerator windowEnumer
         var matchingWindows = topLevelWindows.Where(w =>
                 w.ProcessImagePath.EndsWith(appConfig.ProcessName, StringComparison.CurrentCultureIgnoreCase))
             .ToList();
-        var window = matchingWindows.FirstOrDefault();
-        if (window is null)
+        if (matchingWindows.Count == 0)
         {
             if (appConfig.StartIfNotRunning)
             {
@@ -114,29 +114,88 @@ internal class Switcher(ILogger<Switcher> logger, IWindowEnumerator windowEnumer
         }
 
         var currentWindow = windowEnumerator.GetCurrentWindow();
+        var firstWindow = matchingWindows[0];
 
-        if (currentWindow?.ProcessId != window.ProcessId || appConfig.CycleMode == CycleMode.NextApp)
+        // ToggleWindow has its own remembered-target logic; other modes share the off-app gate.
+        if (appConfig.CycleMode == CycleMode.ToggleWindow)
         {
-            _nextWindows.Clear();
-            logger.LogDebug("Switching to {ProcessName}", appConfig.ProcessName);
-            ActivateWindow(window);
-            return AppSwitchResult.FromApplicationWindow(window);
+            return ExecuteToggleWindow(appConfig, matchingWindows, currentWindow);
+        }
+
+        var isOnThisApp = currentWindow is not null &&
+                          matchingWindows.Exists(w => w.ProcessId == currentWindow.ProcessId);
+
+        if (!isOnThisApp || appConfig.CycleMode == CycleMode.NextApp)
+        {
+            return ActivateFirst(appConfig, firstWindow);
         }
 
         if (appConfig.CycleMode == CycleMode.Hide)
         {
             logger.LogDebug("Hiding {ProcessName}", appConfig.ProcessName);
-            HideWindow(window.Handle);
-        }
-        else if (appConfig.CycleMode == CycleMode.NextWindow)
-        {
-            logger.LogDebug("Switching to next window of {ProcessName}", appConfig.ProcessName);
-            var nextWindow = GetNextWindow(matchingWindows, currentWindow);
-            logger.LogDebug("Selected next window: {Handle}", nextWindow.Handle);
-            ActivateWindow(nextWindow);
+            HideWindow(firstWindow.Handle);
+            return null;
         }
 
-        return null;
+        if (appConfig.CycleMode == CycleMode.NextWindow)
+        {
+            logger.LogDebug("Switching to next window of {ProcessName}", appConfig.ProcessName);
+            var nextWindow = GetNextWindow(matchingWindows, currentWindow!);
+            logger.LogDebug("Selected next window: {Handle}", nextWindow.Handle);
+            ActivateWindow(nextWindow);
+            return null;
+        }
+
+        return ActivateFirst(appConfig, firstWindow);
+    }
+
+    private AppSwitchResult ActivateFirst(ApplicationConfiguration appConfig, ApplicationWindow window)
+    {
+        _nextWindows.Clear();
+        logger.LogDebug("Switching to {ProcessName}", appConfig.ProcessName);
+        ActivateWindow(window);
+        return AppSwitchResult.FromApplicationWindow(window);
+    }
+
+    private AppSwitchResult? ExecuteToggleWindow(
+        ApplicationConfiguration appConfig,
+        List<ApplicationWindow> matchingWindows,
+        ApplicationWindow? currentWindow)
+    {
+        HWND? remembered = _lastToggleWindows.TryGetValue(appConfig.ProcessName, out var handle)
+            ? handle
+            : null;
+
+        // Build handle list once for the pure resolver (index maps 1:1 back to matchingWindows).
+        var matchingHandles = new List<HWND>(matchingWindows.Count);
+        foreach (var window in matchingWindows)
+        {
+            matchingHandles.Add(window.Handle);
+        }
+
+        var resolution = ToggleWindowTargetResolver.Resolve(
+            matchingHandles,
+            currentWindow?.Handle,
+            remembered);
+
+        if (resolution is null)
+        {
+            return null;
+        }
+
+        var target = matchingWindows[resolution.Value.TargetIndex];
+        _lastToggleWindows[appConfig.ProcessName] = target.Handle;
+
+        if (resolution.Value.Action == ToggleWindowAction.Hide)
+        {
+            logger.LogDebug("ToggleWindow: hiding {ProcessName} handle {Handle}", appConfig.ProcessName, target.Handle);
+            HideWindow(target.Handle);
+            return null;
+        }
+
+        logger.LogDebug("ToggleWindow: activating {ProcessName} handle {Handle}", appConfig.ProcessName, target.Handle);
+        ActivateWindow(target);
+        return AppSwitchResult.FromApplicationWindow(target);
     }
 
     private ApplicationWindow GetNextWindow(List<ApplicationWindow> matchingWindows, ApplicationWindow window)
